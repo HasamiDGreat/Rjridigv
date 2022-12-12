@@ -2,9 +2,32 @@ import logging
 import os
 
 from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
 from revChatGPT.revChatGPT import AsyncChatbot as ChatGPT3Bot
 
 from telegram_bot import ChatGPT3TelegramBot
+
+
+def extract_openai_tokens(email, password) -> (str, str, str):
+    with sync_playwright() as p:
+        browser = p.firefox.launch(headless=True)
+        context = browser.new_context()
+        page = context.new_page()
+        # ---------------------
+        page.goto("https://chat.openai.com/auth/login", wait_until="networkidle")
+        page.get_by_role("button", name="Log in").click()
+        page.get_by_label("Email address").fill(email)
+        page.locator("button[name=\"action\"]").click()
+        page.get_by_label("Password").click()
+        page.get_by_label("Password").fill(password)
+        page.get_by_role("button", name="Continue").click()
+        # ---------------------
+        with page.expect_response('**/auth/session', timeout=3000):
+            cookies = context.cookies()
+            session_token = [cookie['value'] for cookie in cookies if cookie['name'] == '__Secure-next-auth.session-token'][0]
+            cf_clearance = [cookie['value'] for cookie in cookies if cookie['name'] == 'cf_clearance'][0]
+            user_agent = page.evaluate('() => navigator.userAgent')
+            return session_token, cf_clearance, user_agent
 
 
 def main():
@@ -24,10 +47,17 @@ def main():
         logging.error(f'The following environment values are missing in your .env: {", ".join(missing_values)}')
         exit(1)
 
+    # Extract OpenAI tokens
+    session_token, cf_clearance, user_agent = extract_openai_tokens(
+        email=os.environ.get('OPENAI_EMAIL'),
+        password=os.environ.get('OPENAI_PASSWORD')
+    )
+
     # Setup configuration
     chatgpt_config = {
-        'email': os.environ['OPENAI_EMAIL'],
-        'password': os.environ['OPENAI_PASSWORD']
+        'session_token': session_token,
+        'cf_clearance': cf_clearance,
+        'user_agent': user_agent
     }
     telegram_config = {
         'token': os.environ['TELEGRAM_BOT_TOKEN'],
